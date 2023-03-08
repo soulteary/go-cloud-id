@@ -7,6 +7,8 @@ import (
 var aliyunExpireTime time.Time
 var aliyunCache []byte
 
+var tencentCloudExpireTime time.Time
+
 const cacheTime = "10m"
 
 func updateCache(cloud string, data []byte) {
@@ -33,14 +35,20 @@ func addExpire(cloud string) {
 	case ALIYUN_CLOUD_TYPE:
 		aliyunExpireTime = expire
 		return
+	case TENCENT_CLOUD_TYPE:
+		tencentCloudExpireTime = expire
+		return
 	}
 }
 
 func isExpired(cloud string) bool {
 	now := time.Now()
+
 	switch cloud {
 	case ALIYUN_CLOUD_TYPE:
 		return aliyunExpireTime.After(now)
+	case TENCENT_CLOUD_TYPE:
+		return tencentCloudExpireTime.After(now)
 	}
 	return false
 }
