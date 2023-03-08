@@ -1,4 +1,4 @@
-package gocloudid
+package cloudid
 
 import (
 	"time"

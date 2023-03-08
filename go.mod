@@ -1,3 +1,3 @@
-module github.com/soulteary/gocloudid
+module github.com/soulteary/cloudid
 
 go 1.20

@@ -1,4 +1,4 @@
-package gocloudid
+package cloudid
 
 // Tencent Cloud Documentation
 // https://www.tencentcloud.com/document/product/213/4934
