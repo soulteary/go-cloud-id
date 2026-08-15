@@ -102,6 +102,50 @@ func TestDetect_Huawei(t *testing.T) {
 	}
 }
 
+func TestDetect_AWS(t *testing.T) {
+	// The AWS identity document requires an IMDSv2 token; unauthenticated
+	// reads (as Aliyun would attempt) get 401 so Aliyun is skipped and AWS wins.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == awsPathToken {
+			_, _ = w.Write([]byte(awsSampleToken))
+			return
+		}
+		if r.Header.Get(awsHeaderToken) != awsSampleToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case awsPathIdentityDocument:
+			_, _ = w.Write([]byte(awsSampleDoc))
+		case awsPathMac:
+			_, _ = w.Write([]byte("06:1a:2b:3c:4d:5e"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	withTestClient(t, server)
+
+	id, err := Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id.Provider != AWS_CLOUD_TYPE || id.InstanceID != "i-0abc123def456" {
+		t.Fatalf("unexpected identity: %+v", id)
+	}
+	if id.Region != "us-east-1" || id.PrivateIPv4 != "172.31.1.2" {
+		t.Fatalf("unexpected identity: %+v", id)
+	}
+
+	got, err := GetIdentity(AWS_CLOUD_TYPE)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Provider != AWS_CLOUD_TYPE {
+		t.Fatalf("unexpected provider: %q", got.Provider)
+	}
+}
+
 func TestDetect_None(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

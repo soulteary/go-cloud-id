@@ -37,7 +37,18 @@ func get(url string, opts ...requestOption) ([]byte, error) {
 
 // getContext performs a context-aware HTTP GET against url and returns the body.
 func getContext(ctx context.Context, url string, opts ...requestOption) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	return do(ctx, http.MethodGet, url, opts...)
+}
+
+// put performs an HTTP PUT against url and returns the response body. It is
+// used by IMDSv2-style metadata services (e.g. AWS) to fetch a session token.
+func put(url string, opts ...requestOption) ([]byte, error) {
+	return do(context.Background(), http.MethodPut, url, opts...)
+}
+
+// do performs a context-aware HTTP request against url and returns the body.
+func do(ctx context.Context, method, url string, opts ...requestOption) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
 	if err != nil {
 		return nil, err
 	}

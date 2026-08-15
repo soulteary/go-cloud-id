@@ -13,7 +13,7 @@ provider-agnostic API that auto-detects the current environment.
 
 ## Features
 
-- **Multi-Cloud**: Alibaba Cloud (Aliyun), Tencent Cloud (QCloud), and Huawei Cloud
+- **Multi-Cloud**: Alibaba Cloud (Aliyun), Tencent Cloud (QCloud), Huawei Cloud, and Amazon Web Services (AWS)
 - **Auto-Detection**: `Detect()` probes providers and returns a normalized identity
 - **Normalized Identity**: One `Identity` struct across providers (instance ID, region, zone, private IPv4, MAC)
 - **Built-in Cache**: Concurrency-safe cache with configurable TTL avoids hammering the metadata endpoint
@@ -25,6 +25,7 @@ provider-agnostic API that auto-detects the current environment.
 - [Alibaba Cloud / Aliyun](https://www.alibabacloud.com/help/en/ecs/user-guide/use-instance-identities) — instance identity document
 - [Tencent Cloud / QCloud](https://www.tencentcloud.com/document/product/213/4934) — instance metadata
 - [Huawei Cloud](https://support.huaweicloud.com/eu/usermanual-ecs/ecs_03_0166.html) — instance metadata (OpenStack metadata + EC2-compatible paths)
+- [Amazon Web Services / AWS](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-identity-documents.html) — EC2 instance identity document (IMDSv2, with IMDSv1 fallback)
 
 > Metadata services are only reachable from within a running cloud instance.
 
@@ -79,6 +80,11 @@ identity, err := cloudid.GetTencentIdentity() // full document
 instanceID, err := cloudid.GetHuaweiInstanceID()
 region, err := cloudid.GetHuaweiRegion()
 identity, err := cloudid.GetHuaweiIdentity() // full document
+
+// Amazon Web Services (AWS)
+instanceID, err := cloudid.GetAWSInstanceID()
+region, err := cloudid.GetAWSRegion()
+identity, err := cloudid.GetAWSIdentity() // full document
 ```
 
 ### Query a known provider
@@ -94,7 +100,7 @@ id, err := cloudid.GetIdentity(cloudid.ALIYUN_CLOUD_TYPE)
 ```go
 // Normalized identity across providers.
 type Identity struct {
-    Provider    string // "aliyun" | "tencent" | "huawei"
+    Provider    string // "aliyun" | "tencent" | "huawei" | "aws"
     InstanceID  string
     Region      string
     Zone        string
@@ -109,6 +115,7 @@ func GetIdentity(provider string) (Identity, error)
 const ALIYUN_CLOUD_TYPE  = "aliyun"
 const TENCENT_CLOUD_TYPE = "tencent"
 const HUAWEI_CLOUD_TYPE  = "huawei"
+const AWS_CLOUD_TYPE     = "aws"
 
 var ErrNotDetected error // no supported cloud detected
 ```
@@ -154,6 +161,20 @@ func GetHuaweiPrivateIpv4() (string, error)
 func GetHuaweiProjectID() (string, error)
 ```
 
+### Amazon Web Services (AWS)
+
+```go
+func GetAWSInfo() ([]byte, error)                  // metadata assembled as JSON
+func SerializeAWSInfo([]byte) (AWSIdentity, error)
+func GetAWSIdentity() (AWSIdentity, error)
+func GetAWSInstanceID() (string, error)
+func GetAWSRegion() (string, error)
+func GetAWSZone() (string, error)
+func GetAWSPrivateIpv4() (string, error)
+func GetAWSMac() (string, error)
+func GetAWSAccountID() (string, error)
+```
+
 ### Cache control
 
 ```go
@@ -177,6 +198,14 @@ func ClearCache()                   // drop all cached documents
   these into a JSON document and caches the result; a missing/empty `uuid` is
   treated as "not a Huawei instance". If `region_id` is absent it is derived
   from the availability zone as a best-effort fallback.
+- **AWS** exposes a JSON instance identity document at
+  `http://169.254.169.254/latest/dynamic/instance-identity/document` (instance
+  id, region, availability zone, private IPv4, account, image). Modern
+  instances default to IMDSv2: the library first requests a short-lived session
+  token via `PUT /latest/api/token` and attaches it on subsequent reads,
+  transparently falling back to token-less IMDSv1 requests when the token
+  endpoint is unavailable. The MAC is read from `/latest/meta-data/mac`. A
+  missing/empty `instanceId` is treated as "not an AWS instance".
 - Successful responses are cached for the configured TTL (default 10 minutes)
   to avoid repeated metadata calls.
 

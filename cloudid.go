@@ -1,9 +1,9 @@
 // Package cloudid retrieves cloud instance identity information from the
 // metadata service of the underlying cloud provider.
 //
-// It currently supports Alibaba Cloud (Aliyun), Tencent Cloud (QCloud), and
-// Huawei Cloud, exposing both provider-specific helpers and a provider-agnostic
-// API that auto-detects the current environment.
+// It currently supports Alibaba Cloud (Aliyun), Tencent Cloud (QCloud), Huawei
+// Cloud, and Amazon Web Services (AWS), exposing both provider-specific helpers
+// and a provider-agnostic API that auto-detects the current environment.
 //
 // Example:
 //
@@ -24,6 +24,7 @@ const (
 	ALIYUN_CLOUD_TYPE  = "aliyun"
 	TENCENT_CLOUD_TYPE = "tencent"
 	HUAWEI_CLOUD_TYPE  = "huawei"
+	AWS_CLOUD_TYPE     = "aws"
 )
 
 // ErrNotDetected is returned when no supported cloud environment can be found.
@@ -32,7 +33,7 @@ var ErrNotDetected = errors.New("cloudid: no supported cloud environment detecte
 // Identity is a provider-agnostic view of an instance's identity, normalized
 // across supported clouds. Fields that a provider does not expose are empty.
 type Identity struct {
-	// Provider is the cloud type, e.g. "aliyun", "tencent", or "huawei".
+	// Provider is the cloud type, e.g. "aliyun", "tencent", "huawei", or "aws".
 	Provider string `json:"provider"`
 	// InstanceID uniquely identifies the instance.
 	InstanceID string `json:"instance_id"`
