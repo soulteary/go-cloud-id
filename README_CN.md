@@ -11,7 +11,7 @@
 
 ## 特性
 
-- **多云支持**: 阿里云（Aliyun）与腾讯云（QCloud）
+- **多云支持**: 阿里云（Aliyun）、腾讯云（QCloud）与华为云（Huawei Cloud）
 - **自动检测**: `Detect()` 逐个探测厂商并返回归一化的身份信息
 - **归一化身份**: 跨厂商统一的 `Identity` 结构（实例 ID、地域、可用区、内网 IPv4、MAC）
 - **内置缓存**: 并发安全、TTL 可配置的缓存，避免频繁请求元数据端点
@@ -22,6 +22,7 @@
 
 - [阿里云 / Aliyun](https://www.alibabacloud.com/help/en/ecs/user-guide/use-instance-identities) — 实例身份文档
 - [腾讯云 / QCloud](https://www.tencentcloud.com/document/product/213/4934) — 实例元数据
+- [华为云 / Huawei Cloud](https://support.huaweicloud.com/eu/usermanual-ecs/ecs_03_0166.html) — 实例元数据（OpenStack 元数据 + EC2 兼容路径）
 
 > 元数据服务只能在运行中的云实例内部访问。
 
@@ -71,6 +72,11 @@ identity, err := cloudid.GetAliyunIdentity() // 完整文档
 instanceID, err := cloudid.GetTencentInstanceID()
 region, err := cloudid.GetTencentRegion()
 identity, err := cloudid.GetTencentIdentity() // 完整文档
+
+// 华为云
+instanceID, err := cloudid.GetHuaweiInstanceID()
+region, err := cloudid.GetHuaweiRegion()
+identity, err := cloudid.GetHuaweiIdentity() // 完整文档
 ```
 
 ### 查询指定厂商
@@ -86,7 +92,7 @@ id, err := cloudid.GetIdentity(cloudid.ALIYUN_CLOUD_TYPE)
 ```go
 // 跨厂商归一化的身份信息。
 type Identity struct {
-    Provider    string // "aliyun" | "tencent"
+    Provider    string // "aliyun" | "tencent" | "huawei"
     InstanceID  string
     Region      string
     Zone        string
@@ -100,6 +106,7 @@ func GetIdentity(provider string) (Identity, error)
 
 const ALIYUN_CLOUD_TYPE  = "aliyun"
 const TENCENT_CLOUD_TYPE = "tencent"
+const HUAWEI_CLOUD_TYPE  = "huawei"
 
 var ErrNotDetected error // 未检测到受支持的云
 ```
@@ -132,6 +139,19 @@ func GetTencentMac() (string, error)
 func GetTencentUUID() (string, error)
 ```
 
+### 华为云（Huawei Cloud）
+
+```go
+func GetHuaweiInfo() ([]byte, error)                // 元数据组装为 JSON
+func SerializeHuaweiInfo([]byte) (HuaweiIdentity, error)
+func GetHuaweiIdentity() (HuaweiIdentity, error)
+func GetHuaweiInstanceID() (string, error)
+func GetHuaweiRegion() (string, error)
+func GetHuaweiZone() (string, error)
+func GetHuaweiPrivateIpv4() (string, error)
+func GetHuaweiProjectID() (string, error)
+```
+
 ### 缓存控制
 
 ```go
@@ -146,6 +166,11 @@ func ClearCache()                   // 清空所有缓存文档
 - **腾讯云**在 `http://metadata.tencentyun.com/latest/meta-data/` 下以独立字段
   暴露元数据；库会拉取各字段、组装为 JSON 文档并缓存结果。若缺少
   `instance-id`，则视为“非腾讯云实例”。
+- **华为云**在 `http://169.254.169.254/openstack/latest/meta_data.json` 提供
+  OpenStack 风格文档（实例 ID、可用区、地域、项目、以及 `meta` 中的 VPC/镜像
+  信息）；内网 IPv4 则从 EC2 兼容路径 `/latest/meta-data/local-ipv4` 读取。库会
+  将其组装为 JSON 文档并缓存，若 `uuid` 缺失或为空则视为“非华为云实例”。当
+  `region_id` 缺失时，会尽力从可用区推导出地域作为兜底。
 - 成功的响应会按配置的 TTL（默认 10 分钟）缓存，避免重复请求元数据。
 
 ## 许可证

@@ -13,7 +13,7 @@ provider-agnostic API that auto-detects the current environment.
 
 ## Features
 
-- **Multi-Cloud**: Alibaba Cloud (Aliyun) and Tencent Cloud (QCloud)
+- **Multi-Cloud**: Alibaba Cloud (Aliyun), Tencent Cloud (QCloud), and Huawei Cloud
 - **Auto-Detection**: `Detect()` probes providers and returns a normalized identity
 - **Normalized Identity**: One `Identity` struct across providers (instance ID, region, zone, private IPv4, MAC)
 - **Built-in Cache**: Concurrency-safe cache with configurable TTL avoids hammering the metadata endpoint
@@ -24,6 +24,7 @@ provider-agnostic API that auto-detects the current environment.
 
 - [Alibaba Cloud / Aliyun](https://www.alibabacloud.com/help/en/ecs/user-guide/use-instance-identities) — instance identity document
 - [Tencent Cloud / QCloud](https://www.tencentcloud.com/document/product/213/4934) — instance metadata
+- [Huawei Cloud](https://support.huaweicloud.com/eu/usermanual-ecs/ecs_03_0166.html) — instance metadata (OpenStack metadata + EC2-compatible paths)
 
 > Metadata services are only reachable from within a running cloud instance.
 
@@ -73,6 +74,11 @@ identity, err := cloudid.GetAliyunIdentity() // full document
 instanceID, err := cloudid.GetTencentInstanceID()
 region, err := cloudid.GetTencentRegion()
 identity, err := cloudid.GetTencentIdentity() // full document
+
+// Huawei Cloud
+instanceID, err := cloudid.GetHuaweiInstanceID()
+region, err := cloudid.GetHuaweiRegion()
+identity, err := cloudid.GetHuaweiIdentity() // full document
 ```
 
 ### Query a known provider
@@ -88,7 +94,7 @@ id, err := cloudid.GetIdentity(cloudid.ALIYUN_CLOUD_TYPE)
 ```go
 // Normalized identity across providers.
 type Identity struct {
-    Provider    string // "aliyun" | "tencent"
+    Provider    string // "aliyun" | "tencent" | "huawei"
     InstanceID  string
     Region      string
     Zone        string
@@ -102,6 +108,7 @@ func GetIdentity(provider string) (Identity, error)
 
 const ALIYUN_CLOUD_TYPE  = "aliyun"
 const TENCENT_CLOUD_TYPE = "tencent"
+const HUAWEI_CLOUD_TYPE  = "huawei"
 
 var ErrNotDetected error // no supported cloud detected
 ```
@@ -134,6 +141,19 @@ func GetTencentMac() (string, error)
 func GetTencentUUID() (string, error)
 ```
 
+### Huawei Cloud
+
+```go
+func GetHuaweiInfo() ([]byte, error)                // metadata assembled as JSON
+func SerializeHuaweiInfo([]byte) (HuaweiIdentity, error)
+func GetHuaweiIdentity() (HuaweiIdentity, error)
+func GetHuaweiInstanceID() (string, error)
+func GetHuaweiRegion() (string, error)
+func GetHuaweiZone() (string, error)
+func GetHuaweiPrivateIpv4() (string, error)
+func GetHuaweiProjectID() (string, error)
+```
+
 ### Cache control
 
 ```go
@@ -150,6 +170,13 @@ func ClearCache()                   // drop all cached documents
   `http://metadata.tencentyun.com/latest/meta-data/`; the library fetches the
   fields, assembles them into a JSON document, and caches the result. A missing
   `instance-id` is treated as "not a Tencent instance".
+- **Huawei** exposes an OpenStack-style document at
+  `http://169.254.169.254/openstack/latest/meta_data.json` (instance id, zone,
+  region, project, VPC/image via `meta`). The private IPv4 is read from the
+  EC2-compatible path `/latest/meta-data/local-ipv4`. The library assembles
+  these into a JSON document and caches the result; a missing/empty `uuid` is
+  treated as "not a Huawei instance". If `region_id` is absent it is derived
+  from the availability zone as a best-effort fallback.
 - Successful responses are cached for the configured TTL (default 10 minutes)
   to avoid repeated metadata calls.
 

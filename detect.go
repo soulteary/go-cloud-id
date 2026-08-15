@@ -11,6 +11,9 @@ func Detect() (Identity, error) {
 	if id, err := tencentIdentity(); err == nil {
 		return id, nil
 	}
+	if id, err := huaweiIdentity(); err == nil {
+		return id, nil
+	}
 	return Identity{}, ErrNotDetected
 }
 
@@ -32,6 +35,8 @@ func GetIdentity(provider string) (Identity, error) {
 		return aliyunIdentity()
 	case TENCENT_CLOUD_TYPE:
 		return tencentIdentity()
+	case HUAWEI_CLOUD_TYPE:
+		return huaweiIdentity()
 	default:
 		return Identity{}, ErrNotDetected
 	}

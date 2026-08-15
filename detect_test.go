@@ -63,6 +63,45 @@ func TestDetect_Tencent(t *testing.T) {
 	}
 }
 
+func TestDetect_Huawei(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case huaweiPathMetaData:
+			_, _ = w.Write([]byte(huaweiSampleMeta))
+		case huaweiPathLocalIPv4:
+			_, _ = w.Write([]byte("192.1.1.2"))
+		default:
+			// Aliyun document path and tencent instance-id 404 so those
+			// providers are skipped and huawei wins.
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	withTestClient(t, server)
+
+	id, err := Detect()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id.Provider != HUAWEI_CLOUD_TYPE {
+		t.Fatalf("unexpected provider: %q", id.Provider)
+	}
+	if id.InstanceID != "ca9e8b7c-f2be-4b6d-a639-f10b4d994d04" {
+		t.Fatalf("unexpected identity: %+v", id)
+	}
+	if id.Region != "cn-north-4" || id.PrivateIPv4 != "192.1.1.2" {
+		t.Fatalf("unexpected identity: %+v", id)
+	}
+
+	got, err := GetIdentity(HUAWEI_CLOUD_TYPE)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Provider != HUAWEI_CLOUD_TYPE {
+		t.Fatalf("unexpected provider: %q", got.Provider)
+	}
+}
+
 func TestDetect_None(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

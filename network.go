@@ -49,7 +49,7 @@ func getContext(ctx context.Context, url string, opts ...requestOption) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("request to %s failed with status code %d", url, res.StatusCode)
