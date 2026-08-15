@@ -5,15 +5,15 @@ import (
 	"fmt"
 )
 
-// ALibaba Cloud Documentation
-// https://www.alibabacloud.com/help/en/elastic-compute-service/latest/use-instance-identities
-// Updated at: 2023-01-06 13:13
+// Alibaba Cloud (Aliyun) instance identity.
+// Documentation: https://www.alibabacloud.com/help/en/ecs/user-guide/use-instance-identities
 
-const ALIYUN_CLOUD_TYPE = "aliyun"
+// aliyunIdentityURL returns the instance identity document endpoint.
+// It is a variable so tests can point it at a local server.
+var aliyunIdentityURL = "http://100.100.100.200/latest/dynamic/instance-identity/document"
 
-const ALIYUN_GET_INSTANCE_INDENTITY = `http://100.100.100.200/latest/dynamic/instance-identity/document`
-
-type ALIYUN_INDENTITY struct {
+// AliyunIdentity mirrors the Aliyun instance identity document.
+type AliyunIdentity struct {
 	ZoneID         string `json:"zone-id"`
 	SerialNumber   string `json:"serial-number"`
 	InstanceID     string `json:"instance-id"`
@@ -25,51 +25,54 @@ type ALIYUN_INDENTITY struct {
 	InstanceType   string `json:"instance-type"`
 }
 
+// ALIYUN_INDENTITY is a backward-compatible alias for AliyunIdentity.
+//
+// Deprecated: use AliyunIdentity instead. This alias preserves compatibility
+// with releases prior to v0.2.0 and may be removed in a future major version.
+type ALIYUN_INDENTITY = AliyunIdentity
+
+// GetAliyunInfo returns the raw Aliyun identity document, using the cache when fresh.
 func GetAliyunInfo() ([]byte, error) {
-	data := getCache(ALIYUN_CLOUD_TYPE)
-	if data == nil {
-		remote, err := get(ALIYUN_GET_INSTANCE_INDENTITY)
-		if err == nil {
-			updateCache(ALIYUN_CLOUD_TYPE, remote)
-			return remote, nil
-		}
+	if data, ok := defaultCache.get(ALIYUN_CLOUD_TYPE); ok {
+		return data, nil
+	}
+
+	remote, err := get(aliyunIdentityURL)
+	if err != nil {
 		return nil, err
 	}
 
-	expired := isExpired(ALIYUN_CLOUD_TYPE)
-	if expired {
-		remote, err := get(ALIYUN_GET_INSTANCE_INDENTITY)
-		if err == nil {
-			addExpire(ALIYUN_CLOUD_TYPE)
-			updateCache(ALIYUN_CLOUD_TYPE, remote)
-			return remote, nil
-		}
-		return nil, err
-	}
-	return data, nil
+	defaultCache.set(ALIYUN_CLOUD_TYPE, remote)
+	return remote, nil
 }
 
-func SerializeAliyunInfo(data []byte) (info ALIYUN_INDENTITY, err error) {
-	err = json.Unmarshal(data, &info)
-	if err != nil {
+// SerializeAliyunInfo parses a raw Aliyun identity document.
+func SerializeAliyunInfo(data []byte) (info AliyunIdentity, err error) {
+	if err = json.Unmarshal(data, &info); err != nil {
 		return info, err
 	}
 	return info, nil
 }
 
-func parseAliyunInfo() (info ALIYUN_INDENTITY, err error) {
+func parseAliyunInfo() (info AliyunIdentity, err error) {
 	data, err := GetAliyunInfo()
 	if err != nil {
-		return info, fmt.Errorf("getting aliyun info failed: %v", err)
+		return info, fmt.Errorf("getting aliyun info failed: %w", err)
 	}
 
 	parsed, err := SerializeAliyunInfo(data)
 	if err != nil {
-		return info, fmt.Errorf("serialize aliyun info failed: %v", err)
+		return info, fmt.Errorf("serialize aliyun info failed: %w", err)
 	}
 	return parsed, nil
 }
 
+// GetAliyunIdentity returns the full parsed Aliyun identity document.
+func GetAliyunIdentity() (AliyunIdentity, error) {
+	return parseAliyunInfo()
+}
+
+// GetAliyunZoneID returns the instance zone ID.
 func GetAliyunZoneID() (string, error) {
 	info, err := parseAliyunInfo()
 	if err != nil {
@@ -78,6 +81,16 @@ func GetAliyunZoneID() (string, error) {
 	return info.ZoneID, nil
 }
 
+// GetAliyunRegionID returns the instance region ID.
+func GetAliyunRegionID() (string, error) {
+	info, err := parseAliyunInfo()
+	if err != nil {
+		return "", err
+	}
+	return info.RegionID, nil
+}
+
+// GetAliyunInstanceID returns the instance ID.
 func GetAliyunInstanceID() (string, error) {
 	info, err := parseAliyunInfo()
 	if err != nil {
@@ -86,6 +99,7 @@ func GetAliyunInstanceID() (string, error) {
 	return info.InstanceID, nil
 }
 
+// GetAliyunPrivateIpv4 returns the private IPv4 address.
 func GetAliyunPrivateIpv4() (string, error) {
 	info, err := parseAliyunInfo()
 	if err != nil {
@@ -94,6 +108,7 @@ func GetAliyunPrivateIpv4() (string, error) {
 	return info.PrivateIpv4, nil
 }
 
+// GetAliyunMac returns the MAC address of the primary network interface.
 func GetAliyunMac() (string, error) {
 	info, err := parseAliyunInfo()
 	if err != nil {
@@ -102,10 +117,27 @@ func GetAliyunMac() (string, error) {
 	return info.Mac, nil
 }
 
+// GetAliyunSerialNumber returns the instance serial number.
 func GetAliyunSerialNumber() (string, error) {
 	info, err := parseAliyunInfo()
 	if err != nil {
 		return "", err
 	}
 	return info.SerialNumber, nil
+}
+
+// aliyunIdentity fetches and normalizes the Aliyun identity for the generic API.
+func aliyunIdentity() (Identity, error) {
+	info, err := parseAliyunInfo()
+	if err != nil {
+		return Identity{}, err
+	}
+	return Identity{
+		Provider:    ALIYUN_CLOUD_TYPE,
+		InstanceID:  info.InstanceID,
+		Region:      info.RegionID,
+		Zone:        info.ZoneID,
+		PrivateIPv4: info.PrivateIpv4,
+		Mac:         info.Mac,
+	}, nil
 }
