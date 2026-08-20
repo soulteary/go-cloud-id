@@ -1,6 +1,7 @@
 package cloudid
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -49,8 +50,8 @@ type HuaweiIdentity struct {
 }
 
 // fetchHuaweiField retrieves a single metadata field, trimming surrounding whitespace.
-func fetchHuaweiField(path string) (string, error) {
-	body, err := get(huaweiMetadataBase + path)
+func fetchHuaweiField(ctx context.Context, path string) (string, error) {
+	body, err := getContext(ctx, huaweiMetadataBase+path)
 	if err != nil {
 		return "", err
 	}
@@ -60,11 +61,15 @@ func fetchHuaweiField(path string) (string, error) {
 // GetHuaweiInfo returns the Huawei metadata assembled as a JSON document,
 // using the cache when fresh.
 func GetHuaweiInfo() ([]byte, error) {
+	return getHuaweiInfoContext(context.Background())
+}
+
+func getHuaweiInfoContext(ctx context.Context) ([]byte, error) {
 	if data, ok := defaultCache.get(HUAWEI_CLOUD_TYPE); ok {
 		return data, nil
 	}
 
-	info, err := fetchHuaweiIdentity()
+	info, complete, err := fetchHuaweiIdentity(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +79,11 @@ func GetHuaweiInfo() ([]byte, error) {
 		return nil, fmt.Errorf("marshal huawei info failed: %w", err)
 	}
 
-	defaultCache.set(HUAWEI_CLOUD_TYPE, data)
+	// Only cache complete results so a transiently missing best-effort field is
+	// retried rather than frozen for the TTL window.
+	if complete {
+		defaultCache.set(HUAWEI_CLOUD_TYPE, data)
+	}
 	return data, nil
 }
 
@@ -87,23 +96,23 @@ func SerializeHuaweiInfo(data []byte) (info HuaweiIdentity, err error) {
 }
 
 // fetchHuaweiIdentity queries the OpenStack metadata document and the
-// EC2-compatible paths, then normalizes them into a HuaweiIdentity.
-func fetchHuaweiIdentity() (HuaweiIdentity, error) {
-	var info HuaweiIdentity
-
+// EC2-compatible paths, then normalizes them into a HuaweiIdentity. It reports
+// complete=false when a best-effort field (local-ipv4 or the AZ fallback) could
+// not be fetched, so callers can avoid caching a partial result.
+func fetchHuaweiIdentity(ctx context.Context) (info HuaweiIdentity, complete bool, err error) {
 	// The OpenStack meta_data.json document is mandatory: its absence (or an
 	// unparsable body) means this is not a Huawei Cloud instance.
-	body, err := get(huaweiMetadataBase + huaweiPathMetaData)
+	body, err := getContext(ctx, huaweiMetadataBase+huaweiPathMetaData)
 	if err != nil {
-		return info, fmt.Errorf("getting huawei info failed: %w", err)
+		return info, false, fmt.Errorf("getting huawei info failed: %w", err)
 	}
 
 	var meta huaweiOpenStackMeta
 	if err := json.Unmarshal(body, &meta); err != nil {
-		return info, fmt.Errorf("serialize huawei meta_data.json failed: %w", err)
+		return info, false, fmt.Errorf("serialize huawei meta_data.json failed: %w", err)
 	}
 	if meta.UUID == "" {
-		return info, fmt.Errorf("getting huawei info failed: empty instance uuid")
+		return info, false, fmt.Errorf("getting huawei info failed: empty instance uuid")
 	}
 
 	info.InstanceID = meta.UUID
@@ -121,13 +130,25 @@ func fetchHuaweiIdentity() (HuaweiIdentity, error) {
 		info.Region = huaweiRegionFromZone(info.Zone)
 	}
 
-	// Remaining fields are best-effort; ignore individual field errors.
-	info.PrivateIpv4, _ = fetchHuaweiField(huaweiPathLocalIPv4)
-	if info.Zone == "" {
-		info.Zone, _ = fetchHuaweiField(huaweiPathAZ)
+	complete = true
+
+	// local-ipv4 is best-effort.
+	if ip, ferr := fetchHuaweiField(ctx, huaweiPathLocalIPv4); ferr == nil {
+		info.PrivateIpv4 = ip
+	} else {
+		complete = false
 	}
 
-	return info, nil
+	// AZ is only fetched from the EC2 path when meta_data.json omitted it.
+	if info.Zone == "" {
+		if az, ferr := fetchHuaweiField(ctx, huaweiPathAZ); ferr == nil {
+			info.Zone = az
+		} else {
+			complete = false
+		}
+	}
+
+	return info, complete, nil
 }
 
 // huaweiRegionFromZone derives a region id from an availability zone id by
@@ -154,7 +175,11 @@ func huaweiRegionFromZone(zone string) string {
 }
 
 func parseHuaweiInfo() (HuaweiIdentity, error) {
-	data, err := GetHuaweiInfo()
+	return parseHuaweiInfoContext(context.Background())
+}
+
+func parseHuaweiInfoContext(ctx context.Context) (HuaweiIdentity, error) {
+	data, err := getHuaweiInfoContext(ctx)
 	if err != nil {
 		return HuaweiIdentity{}, err
 	}
@@ -173,52 +198,32 @@ func GetHuaweiIdentity() (HuaweiIdentity, error) {
 
 // GetHuaweiInstanceID returns the instance ID.
 func GetHuaweiInstanceID() (string, error) {
-	info, err := parseHuaweiInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.InstanceID, nil
+	return field(parseHuaweiInfo, func(i HuaweiIdentity) string { return i.InstanceID })
 }
 
 // GetHuaweiRegion returns the instance region.
 func GetHuaweiRegion() (string, error) {
-	info, err := parseHuaweiInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Region, nil
+	return field(parseHuaweiInfo, func(i HuaweiIdentity) string { return i.Region })
 }
 
 // GetHuaweiZone returns the instance availability zone.
 func GetHuaweiZone() (string, error) {
-	info, err := parseHuaweiInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Zone, nil
+	return field(parseHuaweiInfo, func(i HuaweiIdentity) string { return i.Zone })
 }
 
 // GetHuaweiPrivateIpv4 returns the private IPv4 address.
 func GetHuaweiPrivateIpv4() (string, error) {
-	info, err := parseHuaweiInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.PrivateIpv4, nil
+	return field(parseHuaweiInfo, func(i HuaweiIdentity) string { return i.PrivateIpv4 })
 }
 
 // GetHuaweiProjectID returns the project ID accommodating the instance.
 func GetHuaweiProjectID() (string, error) {
-	info, err := parseHuaweiInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.ProjectID, nil
+	return field(parseHuaweiInfo, func(i HuaweiIdentity) string { return i.ProjectID })
 }
 
 // huaweiIdentity fetches and normalizes the Huawei identity for the generic API.
-func huaweiIdentity() (Identity, error) {
-	info, err := parseHuaweiInfo()
+func huaweiIdentity(ctx context.Context) (Identity, error) {
+	info, err := parseHuaweiInfoContext(ctx)
 	if err != nil {
 		return Identity{}, err
 	}

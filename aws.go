@@ -1,6 +1,7 @@
 package cloudid
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -64,8 +65,8 @@ type AWSIdentity struct {
 // awsToken obtains an IMDSv2 session token. On IMDSv1-only instances the PUT
 // endpoint may be unavailable; callers treat an error here as "no token" and
 // fall back to unauthenticated requests.
-func awsToken() (string, error) {
-	body, err := put(awsMetadataBase+awsPathToken, withHeader(awsHeaderTokenTTL, awsTokenTTLSeconds))
+func awsToken(ctx context.Context) (string, error) {
+	body, err := putContext(ctx, awsMetadataBase+awsPathToken, withHeader(awsHeaderTokenTTL, awsTokenTTLSeconds))
 	if err != nil {
 		return "", err
 	}
@@ -74,21 +75,25 @@ func awsToken() (string, error) {
 
 // awsGet fetches a metadata path, attaching the IMDSv2 token header when a
 // non-empty token is provided.
-func awsGet(path, token string) ([]byte, error) {
+func awsGet(ctx context.Context, path, token string) ([]byte, error) {
 	if token != "" {
-		return get(awsMetadataBase+path, withHeader(awsHeaderToken, token))
+		return getContext(ctx, awsMetadataBase+path, withHeader(awsHeaderToken, token))
 	}
-	return get(awsMetadataBase + path)
+	return getContext(ctx, awsMetadataBase+path)
 }
 
 // GetAWSInfo returns the AWS metadata assembled as a normalized JSON document,
 // using the cache when fresh.
 func GetAWSInfo() ([]byte, error) {
+	return getAWSInfoContext(context.Background())
+}
+
+func getAWSInfoContext(ctx context.Context) ([]byte, error) {
 	if data, ok := defaultCache.get(AWS_CLOUD_TYPE); ok {
 		return data, nil
 	}
 
-	info, err := fetchAWSIdentity()
+	info, complete, err := fetchAWSIdentity(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +103,11 @@ func GetAWSInfo() ([]byte, error) {
 		return nil, fmt.Errorf("marshal aws info failed: %w", err)
 	}
 
-	defaultCache.set(AWS_CLOUD_TYPE, data)
+	// The MAC is best-effort; only cache when it was fetched successfully so a
+	// transient failure is retried rather than frozen for the TTL window.
+	if complete {
+		defaultCache.set(AWS_CLOUD_TYPE, data)
+	}
 	return data, nil
 }
 
@@ -111,26 +120,25 @@ func SerializeAWSInfo(data []byte) (info AWSIdentity, err error) {
 }
 
 // fetchAWSIdentity queries the instance identity document (using an IMDSv2
-// token when available) and normalizes it into an AWSIdentity.
-func fetchAWSIdentity() (AWSIdentity, error) {
-	var info AWSIdentity
-
+// token when available) and normalizes it into an AWSIdentity. It reports
+// complete=false when the best-effort MAC could not be fetched.
+func fetchAWSIdentity(ctx context.Context) (info AWSIdentity, complete bool, err error) {
 	// A token is best-effort: IMDSv2 requires it, IMDSv1 ignores it.
-	token, _ := awsToken()
+	token, _ := awsToken(ctx)
 
 	// The identity document is mandatory: its absence (or an unparsable body)
 	// means this is not an AWS EC2 instance.
-	body, err := awsGet(awsPathIdentityDocument, token)
+	body, err := awsGet(ctx, awsPathIdentityDocument, token)
 	if err != nil {
-		return info, fmt.Errorf("getting aws info failed: %w", err)
+		return info, false, fmt.Errorf("getting aws info failed: %w", err)
 	}
 
 	var doc awsIdentityDocument
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return info, fmt.Errorf("serialize aws identity document failed: %w", err)
+		return info, false, fmt.Errorf("serialize aws identity document failed: %w", err)
 	}
 	if doc.InstanceID == "" {
-		return info, fmt.Errorf("getting aws info failed: empty instance id")
+		return info, false, fmt.Errorf("getting aws info failed: empty instance id")
 	}
 
 	info.InstanceID = doc.InstanceID
@@ -142,15 +150,22 @@ func fetchAWSIdentity() (AWSIdentity, error) {
 	info.InstanceType = doc.InstanceType
 
 	// MAC is not part of the identity document; fetch it best-effort.
-	if mac, err := awsGet(awsPathMac, token); err == nil {
+	complete = true
+	if mac, err := awsGet(ctx, awsPathMac, token); err == nil {
 		info.Mac = strings.TrimSpace(string(mac))
+	} else {
+		complete = false
 	}
 
-	return info, nil
+	return info, complete, nil
 }
 
 func parseAWSInfo() (AWSIdentity, error) {
-	data, err := GetAWSInfo()
+	return parseAWSInfoContext(context.Background())
+}
+
+func parseAWSInfoContext(ctx context.Context) (AWSIdentity, error) {
+	data, err := getAWSInfoContext(ctx)
 	if err != nil {
 		return AWSIdentity{}, err
 	}
@@ -169,61 +184,37 @@ func GetAWSIdentity() (AWSIdentity, error) {
 
 // GetAWSInstanceID returns the instance ID.
 func GetAWSInstanceID() (string, error) {
-	info, err := parseAWSInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.InstanceID, nil
+	return field(parseAWSInfo, func(i AWSIdentity) string { return i.InstanceID })
 }
 
 // GetAWSRegion returns the instance region.
 func GetAWSRegion() (string, error) {
-	info, err := parseAWSInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Region, nil
+	return field(parseAWSInfo, func(i AWSIdentity) string { return i.Region })
 }
 
 // GetAWSZone returns the instance availability zone.
 func GetAWSZone() (string, error) {
-	info, err := parseAWSInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Zone, nil
+	return field(parseAWSInfo, func(i AWSIdentity) string { return i.Zone })
 }
 
 // GetAWSPrivateIpv4 returns the private IPv4 address.
 func GetAWSPrivateIpv4() (string, error) {
-	info, err := parseAWSInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.PrivateIpv4, nil
+	return field(parseAWSInfo, func(i AWSIdentity) string { return i.PrivateIpv4 })
 }
 
 // GetAWSMac returns the MAC address of the primary network interface.
 func GetAWSMac() (string, error) {
-	info, err := parseAWSInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Mac, nil
+	return field(parseAWSInfo, func(i AWSIdentity) string { return i.Mac })
 }
 
 // GetAWSAccountID returns the owner account ID.
 func GetAWSAccountID() (string, error) {
-	info, err := parseAWSInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.AccountID, nil
+	return field(parseAWSInfo, func(i AWSIdentity) string { return i.AccountID })
 }
 
 // awsIdentity fetches and normalizes the AWS identity for the generic API.
-func awsIdentity() (Identity, error) {
-	info, err := parseAWSInfo()
+func awsIdentity(ctx context.Context) (Identity, error) {
+	info, err := parseAWSInfoContext(ctx)
 	if err != nil {
 		return Identity{}, err
 	}

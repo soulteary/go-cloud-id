@@ -1,6 +1,7 @@
 package cloudid
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -42,8 +43,8 @@ type TencentIdentity struct {
 type TENCENT_INDENTITY = TencentIdentity
 
 // fetchTencentField retrieves a single metadata field, trimming surrounding whitespace.
-func fetchTencentField(path string) (string, error) {
-	body, err := get(tencentMetadataBase + path)
+func fetchTencentField(ctx context.Context, path string) (string, error) {
+	body, err := getContext(ctx, tencentMetadataBase+path)
 	if err != nil {
 		return "", err
 	}
@@ -53,11 +54,15 @@ func fetchTencentField(path string) (string, error) {
 // GetTencentInfo returns the Tencent metadata assembled as a JSON document,
 // using the cache when fresh.
 func GetTencentInfo() ([]byte, error) {
+	return getTencentInfoContext(context.Background())
+}
+
+func getTencentInfoContext(ctx context.Context) ([]byte, error) {
 	if data, ok := defaultCache.get(TENCENT_CLOUD_TYPE); ok {
 		return data, nil
 	}
 
-	info, err := fetchTencentIdentity()
+	info, complete, err := fetchTencentIdentity(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +72,11 @@ func GetTencentInfo() ([]byte, error) {
 		return nil, fmt.Errorf("marshal tencent info failed: %w", err)
 	}
 
-	defaultCache.set(TENCENT_CLOUD_TYPE, data)
+	// Only cache complete results: a best-effort field that failed this time
+	// might succeed on retry, so we avoid freezing a partial document.
+	if complete {
+		defaultCache.set(TENCENT_CLOUD_TYPE, data)
+	}
 	return data, nil
 }
 
@@ -80,28 +89,46 @@ func SerializeTencentInfo(data []byte) (info TencentIdentity, err error) {
 }
 
 // fetchTencentIdentity queries each metadata field directly from the service.
-func fetchTencentIdentity() (TencentIdentity, error) {
-	var info TencentIdentity
-
+// It reports complete=false when any best-effort field could not be fetched, so
+// callers can avoid caching a partial result.
+func fetchTencentIdentity(ctx context.Context) (info TencentIdentity, complete bool, err error) {
 	// instance-id is mandatory: its absence means this is not a Tencent instance.
-	instanceID, err := fetchTencentField(tencentPathInstanceID)
+	instanceID, err := fetchTencentField(ctx, tencentPathInstanceID)
 	if err != nil {
-		return info, fmt.Errorf("getting tencent info failed: %w", err)
+		return info, false, fmt.Errorf("getting tencent info failed: %w", err)
 	}
 	info.InstanceID = instanceID
 
-	// Remaining fields are best-effort; ignore individual field errors.
-	info.Region, _ = fetchTencentField(tencentPathRegion)
-	info.Zone, _ = fetchTencentField(tencentPathZone)
-	info.PrivateIpv4, _ = fetchTencentField(tencentPathLocalIPv4)
-	info.Mac, _ = fetchTencentField(tencentPathMac)
-	info.UUID, _ = fetchTencentField(tencentPathUUID)
+	// Remaining fields are best-effort; track whether all of them succeeded.
+	complete = true
+	fields := []struct {
+		path string
+		dst  *string
+	}{
+		{tencentPathRegion, &info.Region},
+		{tencentPathZone, &info.Zone},
+		{tencentPathLocalIPv4, &info.PrivateIpv4},
+		{tencentPathMac, &info.Mac},
+		{tencentPathUUID, &info.UUID},
+	}
+	for _, f := range fields {
+		v, ferr := fetchTencentField(ctx, f.path)
+		if ferr != nil {
+			complete = false
+			continue
+		}
+		*f.dst = v
+	}
 
-	return info, nil
+	return info, complete, nil
 }
 
 func parseTencentInfo() (TencentIdentity, error) {
-	data, err := GetTencentInfo()
+	return parseTencentInfoContext(context.Background())
+}
+
+func parseTencentInfoContext(ctx context.Context) (TencentIdentity, error) {
+	data, err := getTencentInfoContext(ctx)
 	if err != nil {
 		return TencentIdentity{}, err
 	}
@@ -120,61 +147,37 @@ func GetTencentIdentity() (TencentIdentity, error) {
 
 // GetTencentInstanceID returns the instance ID.
 func GetTencentInstanceID() (string, error) {
-	info, err := parseTencentInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.InstanceID, nil
+	return field(parseTencentInfo, func(i TencentIdentity) string { return i.InstanceID })
 }
 
 // GetTencentRegion returns the instance region.
 func GetTencentRegion() (string, error) {
-	info, err := parseTencentInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Region, nil
+	return field(parseTencentInfo, func(i TencentIdentity) string { return i.Region })
 }
 
 // GetTencentZone returns the instance availability zone.
 func GetTencentZone() (string, error) {
-	info, err := parseTencentInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Zone, nil
+	return field(parseTencentInfo, func(i TencentIdentity) string { return i.Zone })
 }
 
 // GetTencentPrivateIpv4 returns the private IPv4 address.
 func GetTencentPrivateIpv4() (string, error) {
-	info, err := parseTencentInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.PrivateIpv4, nil
+	return field(parseTencentInfo, func(i TencentIdentity) string { return i.PrivateIpv4 })
 }
 
 // GetTencentMac returns the MAC address of the primary network interface.
 func GetTencentMac() (string, error) {
-	info, err := parseTencentInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Mac, nil
+	return field(parseTencentInfo, func(i TencentIdentity) string { return i.Mac })
 }
 
 // GetTencentUUID returns the instance UUID.
 func GetTencentUUID() (string, error) {
-	info, err := parseTencentInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.UUID, nil
+	return field(parseTencentInfo, func(i TencentIdentity) string { return i.UUID })
 }
 
 // tencentIdentity fetches and normalizes the Tencent identity for the generic API.
-func tencentIdentity() (Identity, error) {
-	info, err := parseTencentInfo()
+func tencentIdentity(ctx context.Context) (Identity, error) {
+	info, err := parseTencentInfoContext(ctx)
 	if err != nil {
 		return Identity{}, err
 	}

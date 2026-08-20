@@ -14,7 +14,7 @@ provider-agnostic API that auto-detects the current environment.
 ## Features
 
 - **Multi-Cloud**: Alibaba Cloud (Aliyun), Tencent Cloud (QCloud), Huawei Cloud, and Amazon Web Services (AWS)
-- **Auto-Detection**: `Detect()` probes providers and returns a normalized identity
+- **Auto-Detection**: `Detect()` probes providers concurrently and returns a normalized identity, significantly reducing detection latency in non-cloud environments; it also supports context cancellation
 - **Normalized Identity**: One `Identity` struct across providers (instance ID, region, zone, private IPv4, MAC)
 - **Built-in Cache**: Concurrency-safe cache with configurable TTL avoids hammering the metadata endpoint
 - **Safe HTTP**: Per-request timeout and a response size cap to guard against oversized responses
@@ -109,15 +109,18 @@ type Identity struct {
 }
 
 func Detect() (Identity, error)            // first responding provider wins
+func DetectContext(ctx context.Context) (Identity, error) // Detect with a context; can be cancelled early. Detect() is equivalent to DetectContext(context.Background())
 func DetectProvider() (string, error)       // detected cloud type
 func GetIdentity(provider string) (Identity, error)
+func GetIdentityContext(ctx context.Context, provider string) (Identity, error) // GetIdentity with a context
 
 const ALIYUN_CLOUD_TYPE  = "aliyun"
 const TENCENT_CLOUD_TYPE = "tencent"
 const HUAWEI_CLOUD_TYPE  = "huawei"
 const AWS_CLOUD_TYPE     = "aws"
 
-var ErrNotDetected error // no supported cloud detected
+var ErrNotDetected error        // no supported cloud detected
+var ErrMetadataUnavailable error // returned when the metadata service fails due to network error/timeout/5xx (distinct from ErrNotDetected's "no supported cloud detected"); check with errors.Is
 ```
 
 ### Alibaba Cloud (Aliyun)
@@ -207,7 +210,8 @@ func ClearCache()                   // drop all cached documents
   endpoint is unavailable. The MAC is read from `/latest/meta-data/mac`. A
   missing/empty `instanceId` is treated as "not an AWS instance".
 - Successful responses are cached for the configured TTL (default 10 minutes)
-  to avoid repeated metadata calls.
+  to avoid repeated metadata calls. Best-effort field fetches that fail do not
+  cache a partial result, so the next call will retry.
 
 ## License
 

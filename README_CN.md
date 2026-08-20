@@ -12,7 +12,7 @@
 ## 特性
 
 - **多云支持**: 阿里云（Aliyun）、腾讯云（QCloud）、华为云（Huawei Cloud）与亚马逊云（AWS）
-- **自动检测**: `Detect()` 逐个探测厂商并返回归一化的身份信息
+- **自动检测**: `Detect()` 现在并发探测各厂商并返回归一化的身份信息，显著降低非云环境下的检测延迟；并支持 context 取消
 - **归一化身份**: 跨厂商统一的 `Identity` 结构（实例 ID、地域、可用区、内网 IPv4、MAC）
 - **内置缓存**: 并发安全、TTL 可配置的缓存，避免频繁请求元数据端点
 - **安全的 HTTP**: 单次请求超时与响应体大小上限，防止异常超大响应
@@ -107,15 +107,18 @@ type Identity struct {
 }
 
 func Detect() (Identity, error)            // 首个成功响应的厂商生效
+func DetectContext(ctx context.Context) (Identity, error) // 带 context 的 Detect，可提前取消；Detect() 等价于 DetectContext(context.Background())
 func DetectProvider() (string, error)       // 检测到的云类型
 func GetIdentity(provider string) (Identity, error)
+func GetIdentityContext(ctx context.Context, provider string) (Identity, error) // 带 context 的 GetIdentity
 
 const ALIYUN_CLOUD_TYPE  = "aliyun"
 const TENCENT_CLOUD_TYPE = "tencent"
 const HUAWEI_CLOUD_TYPE  = "huawei"
 const AWS_CLOUD_TYPE     = "aws"
 
-var ErrNotDetected error // 未检测到受支持的云
+var ErrNotDetected error        // 未检测到受支持的云
+var ErrMetadataUnavailable error // 元数据服务因网络故障/超时/5xx 而不可用时返回（区别于 ErrNotDetected 的“未检测到受支持的云”）；可用 errors.Is 判定
 ```
 
 ### 阿里云（Aliyun）
@@ -198,7 +201,8 @@ func ClearCache()                   // 清空所有缓存文档
   启用 IMDSv2：库会先通过 `PUT /latest/api/token` 获取短期会话令牌并在后续请求中
   携带，当令牌端点不可用时自动回退为无令牌的 IMDSv1 请求。MAC 从
   `/latest/meta-data/mac` 读取。若 `instanceId` 缺失或为空则视为“非 AWS 实例”。
-- 成功的响应会按配置的 TTL（默认 10 分钟）缓存，避免重复请求元数据。
+- 成功的响应会按配置的 TTL（默认 10 分钟）缓存，避免重复请求元数据。best-effort
+  字段抓取失败时不会缓存残缺结果，下次调用会重试。
 
 ## 许可证
 

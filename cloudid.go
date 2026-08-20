@@ -30,6 +30,12 @@ const (
 // ErrNotDetected is returned when no supported cloud environment can be found.
 var ErrNotDetected = errors.New("cloudid: no supported cloud environment detected")
 
+// ErrMetadataUnavailable wraps failures where a metadata service could not be
+// reached or returned a server-side error (transport failure, timeout, or 5xx
+// status). It is distinct from a "not this cloud" outcome (4xx / 404), letting
+// callers use errors.Is to tell an outage apart from a wrong-provider probe.
+var ErrMetadataUnavailable = errors.New("cloudid: metadata service unavailable")
+
 // Identity is a provider-agnostic view of an instance's identity, normalized
 // across supported clouds. Fields that a provider does not expose are empty.
 type Identity struct {
@@ -45,6 +51,18 @@ type Identity struct {
 	PrivateIPv4 string `json:"private_ipv4"`
 	// Mac is the MAC address of the primary network interface.
 	Mac string `json:"mac"`
+}
+
+// field parses an identity via parse and projects a single string field out of
+// it via pick. It centralizes the "parse then read one field" boilerplate that
+// every single-field getter shares, so provider getters need only supply the
+// projection.
+func field[T any](parse func() (T, error), pick func(T) string) (string, error) {
+	v, err := parse()
+	if err != nil {
+		return "", err
+	}
+	return pick(v), nil
 }
 
 // SetCacheTTL overrides the freshness window for cached metadata documents on

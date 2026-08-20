@@ -1,6 +1,7 @@
 package cloudid
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -33,11 +34,15 @@ type ALIYUN_INDENTITY = AliyunIdentity
 
 // GetAliyunInfo returns the raw Aliyun identity document, using the cache when fresh.
 func GetAliyunInfo() ([]byte, error) {
+	return getAliyunInfoContext(context.Background())
+}
+
+func getAliyunInfoContext(ctx context.Context) ([]byte, error) {
 	if data, ok := defaultCache.get(ALIYUN_CLOUD_TYPE); ok {
 		return data, nil
 	}
 
-	remote, err := get(aliyunIdentityURL)
+	remote, err := getContext(ctx, aliyunIdentityURL)
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +60,11 @@ func SerializeAliyunInfo(data []byte) (info AliyunIdentity, err error) {
 }
 
 func parseAliyunInfo() (info AliyunIdentity, err error) {
-	data, err := GetAliyunInfo()
+	return parseAliyunInfoContext(context.Background())
+}
+
+func parseAliyunInfoContext(ctx context.Context) (info AliyunIdentity, err error) {
+	data, err := getAliyunInfoContext(ctx)
 	if err != nil {
 		return info, fmt.Errorf("getting aliyun info failed: %w", err)
 	}
@@ -74,61 +83,37 @@ func GetAliyunIdentity() (AliyunIdentity, error) {
 
 // GetAliyunZoneID returns the instance zone ID.
 func GetAliyunZoneID() (string, error) {
-	info, err := parseAliyunInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.ZoneID, nil
+	return field(parseAliyunInfo, func(i AliyunIdentity) string { return i.ZoneID })
 }
 
 // GetAliyunRegionID returns the instance region ID.
 func GetAliyunRegionID() (string, error) {
-	info, err := parseAliyunInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.RegionID, nil
+	return field(parseAliyunInfo, func(i AliyunIdentity) string { return i.RegionID })
 }
 
 // GetAliyunInstanceID returns the instance ID.
 func GetAliyunInstanceID() (string, error) {
-	info, err := parseAliyunInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.InstanceID, nil
+	return field(parseAliyunInfo, func(i AliyunIdentity) string { return i.InstanceID })
 }
 
 // GetAliyunPrivateIpv4 returns the private IPv4 address.
 func GetAliyunPrivateIpv4() (string, error) {
-	info, err := parseAliyunInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.PrivateIpv4, nil
+	return field(parseAliyunInfo, func(i AliyunIdentity) string { return i.PrivateIpv4 })
 }
 
 // GetAliyunMac returns the MAC address of the primary network interface.
 func GetAliyunMac() (string, error) {
-	info, err := parseAliyunInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.Mac, nil
+	return field(parseAliyunInfo, func(i AliyunIdentity) string { return i.Mac })
 }
 
 // GetAliyunSerialNumber returns the instance serial number.
 func GetAliyunSerialNumber() (string, error) {
-	info, err := parseAliyunInfo()
-	if err != nil {
-		return "", err
-	}
-	return info.SerialNumber, nil
+	return field(parseAliyunInfo, func(i AliyunIdentity) string { return i.SerialNumber })
 }
 
 // aliyunIdentity fetches and normalizes the Aliyun identity for the generic API.
-func aliyunIdentity() (Identity, error) {
-	info, err := parseAliyunInfo()
+func aliyunIdentity(ctx context.Context) (Identity, error) {
+	info, err := parseAliyunInfoContext(ctx)
 	if err != nil {
 		return Identity{}, err
 	}
