@@ -74,23 +74,6 @@ jobs:
           package_threshold: "90"
           commit: "false"
 
-      - name: Set up Go environment
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: 'go.mod'
-
-      - name: Generate coverage profile for Codecov
-        run: go test . -race -covermode=atomic -coverprofile=coverage.out
-
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.out
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
-
       - name: Upload raw test results
         if: always()
         uses: actions/upload-artifact@v6

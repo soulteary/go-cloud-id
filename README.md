@@ -4,7 +4,6 @@
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![Coverage](.github/coverage.svg)](.github/go-test-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![codecov](https://codecov.io/gh/soulteary/go-cloud-id/graph/badge.svg)](https://codecov.io/gh/soulteary/go-cloud-id)
 
 [中文文档](README_CN.md)
 
