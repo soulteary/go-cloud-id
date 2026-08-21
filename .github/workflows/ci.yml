@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+# Default to read-only for the whole workflow; only the restricted write-back
+# job opts into contents: write.
+permissions:
+  contents: read
 
 jobs:
   # Code formatting check
@@ -45,33 +49,38 @@ jobs:
       - name: Run go vet
         run: go vet ./...
 
-  # Code testing
-  test:
-    name: Code Testing
+  # Code testing + coverage gate (using go-test-report-action / GTR)
+  coverage:
+    name: coverage gate
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+
+      # GTR runs `go test` once with the race detector and derives both test
+      # stats and coverage from that single run, then enforces the gates.
+      # Read-only on PRs: no write-back, no secrets. The library lives in the
+      # module root, so a single "." package covers everything; measured
+      # coverage is ~96.9%, so the 90 total / 90 per-package gates leave headroom.
+      - name: go test + coverage gate (GTR)
+        uses: soulteary/go-test-report-action@92d333b2adb625436dc9eec7e7335c2af5db61c8 # v1.0.0
+        with:
+          packages: "."
+          race: "true"
+          cover_mode: atomic
+          coverage_threshold: "90"
+          package_threshold: "90"
+          commit: "false"
 
       - name: Set up Go environment
         uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
 
-      - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Generate coverage report
-        run: go tool cover -html=coverage.out -o coverage.html
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-report
-          path: coverage.html
-
-      - name: Display coverage summary
-        run: go tool cover -func=coverage.out
+      - name: Generate coverage profile for Codecov
+        run: go test . -race -covermode=atomic -coverprofile=coverage.out
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
@@ -81,6 +90,14 @@ jobs:
           flags: unittests
           name: codecov-umbrella
           fail_ci_if_error: false
+
+      - name: Upload raw test results
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-test-report-${{ github.run_id }}
+          path: .github/test-results/
+          if-no-files-found: ignore
 
   # Code quality check (using golangci-lint)
   lint:
@@ -120,3 +137,86 @@ jobs:
 
       - name: Run security scan
         run: govulncheck ./...
+
+  # Regenerate the committed test report / coverage badge / json in-tree WITHOUT
+  # committing. Only runs on pushes to the default branch (never on PRs), and a
+  # separate restricted job performs the commit.
+  coverage-report-generate:
+    name: coverage report (generate, no write)
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/master')
+    needs: [coverage]
+    runs-on: ubuntu-latest
+    # The report-generating Action runs strictly read-only: it must never hold
+    # contents: write. It regenerates the report files in the working tree
+    # (commit: false); a separate restricted job performs the commit.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      # Regenerate .github/go-test-report.md, .github/coverage.svg, and
+      # .github/go-test-report.json in-tree WITHOUT committing.
+      - name: go test report (GTR, no write-back)
+        uses: soulteary/go-test-report-action@92d333b2adb625436dc9eec7e7335c2af5db61c8 # v1.0.0
+        with:
+          packages: "."
+          race: "true"
+          cover_mode: atomic
+          coverage_threshold: "90"
+          package_threshold: "90"
+          commit: "false"
+
+      # Hand only the report artifacts to the write-back job. The downstream job
+      # restores exactly these paths, so nothing else can enter the commit.
+      - name: upload generated report artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-report-${{ github.run_id }}
+          path: |
+            .github/go-test-report.json
+            .github/go-test-report.md
+            .github/coverage.svg
+          if-no-files-found: error
+
+  coverage-report-writeback:
+    name: coverage report (restricted write-back)
+    needs: [coverage-report-generate]
+    runs-on: ubuntu-latest
+    # This is the ONLY job with contents: write, and it never runs the report
+    # generator. It restores the generated artifacts, stages only the
+    # allowlisted report paths, verifies the staged set, and commits with plain
+    # git — so a compromised generator cannot push arbitrary files.
+    permissions:
+      contents: write
+    # Prevent overlapping runs from committing/overwriting the report concurrently.
+    concurrency:
+      group: coverage-report-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: download generated report artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: coverage-report-${{ github.run_id }}
+          path: .github
+
+      - name: stage, verify allowlist, and commit report
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            .github/go-test-report.json \
+            .github/go-test-report.md \
+            .github/coverage.svg
+          # Fail closed if anything outside the report allowlist got staged.
+          bash scripts/check-writeback-allowlist.sh
+          if git diff --cached --quiet; then
+            echo "report unchanged; nothing to commit"
+            exit 0
+          fi
+          git commit -m "ci: update Go test report [skip ci]"
+          git push
