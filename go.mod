@@ -1,3 +1,3 @@
 module github.com/soulteary/go-cloud-id
 
-go 1.26.6
+go 1.27.3

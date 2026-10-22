@@ -65,7 +65,7 @@ jobs:
       # module root, so a single "." package covers everything; measured
       # coverage is ~96.9%, so the 90 total / 90 per-package gates leave headroom.
       - name: go test + coverage gate (GTR)
-        uses: soulteary/go-test-report-action@92d333b2adb625436dc9eec7e7335c2af5db61c8 # v1.0.0
+        uses: soulteary/go-test-report-action@bf04b539f7bf2a6f67d602da4259904b3dcdeba1 # v1.1.2
         with:
           packages: "."
           race: "true"
@@ -143,7 +143,7 @@ jobs:
       # Regenerate .github/go-test-report.md, .github/coverage.svg, and
       # .github/go-test-report.json in-tree WITHOUT committing.
       - name: go test report (GTR, no write-back)
-        uses: soulteary/go-test-report-action@92d333b2adb625436dc9eec7e7335c2af5db61c8 # v1.0.0
+        uses: soulteary/go-test-report-action@bf04b539f7bf2a6f67d602da4259904b3dcdeba1 # v1.1.2
         with:
           packages: "."
           race: "true"
